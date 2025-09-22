@@ -18,7 +18,6 @@ const postSchema = new Schema(
         trim: true,
       }
     ],
-   
     creator: {
       type: Schema.Types.ObjectId,
       ref: "User",
@@ -32,8 +31,7 @@ const postSchema = new Schema(
     ],
     image: {
       type: String,
-      default: null,
-      required: true,
+      default: null,   // optional now
     },
     likes: [
       {
@@ -48,5 +46,8 @@ const postSchema = new Schema(
   },
   { timestamps: true }
 );
+
+// Optional indexes for better query performance
+postSchema.index({ title: "text", content: "text", tags: 1 });
 
 export const Post = mongoose.model("Post", postSchema);

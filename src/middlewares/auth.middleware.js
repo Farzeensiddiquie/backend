@@ -12,7 +12,7 @@ export const authMiddleware = (req, res, next) => {
       _id: decoded._id,
       email: decoded.email,
       userName: decoded.userName,
-      fullName: decoded.fullName,
+     
     };
     next();
   } catch (err) {

@@ -1,471 +1,214 @@
-import { Post } from "../models/post.models.js";
-import { User } from "../models/user.models.js";
 import { v2 as cloudinary } from "cloudinary";
-import streamifier from "streamifier";
+import { Post } from "../models/post.models.js";
 
-// Configure Cloudinary with explicit credentials
+// ================= CLOUDINARY CONFIG =================
 cloudinary.config({
-    cloud_name: process.env.CLOUD_NAME || "dqxmgdj5i",
-    api_key: process.env.API_KEY || "766337761652718", 
-    api_secret: process.env.API_SECRET || "WdKmctLgJyXhgisDeBbLAcAaVss",
-    secure: true
+  cloud_name: process.env.CLOUD_NAME,
+  api_key: process.env.API_KEY,
+  api_secret: process.env.API_SECRET,
+  secure: true,
 });
-
-const uploadToCloudinary = (fileBuffer, folder = "posts") => {
-  return new Promise((resolve, reject) => {
-    const stream = cloudinary.uploader.upload_stream({ folder }, (error, result) => {
-      if (result) resolve(result);
-      else reject(error);
-    });
-    streamifier.createReadStream(fileBuffer).pipe(stream);
-  });
-};
 
 // ================= CREATE POST =================
 export const createPost = async (req, res) => {
   try {
     const { title, content, tags } = req.body;
-    const creatorId = req.user._id;
+    const creator = req.user.id;
 
     if (!title || !content) {
-      return res.status(400).json({ 
-        success: false, 
-        message: "Title and content are required" 
-      });
+      return res.status(400).json({ message: "Title and content are required" });
     }
 
-    // Parse tags if provided as string
-    let parsedTags = [];
-    if (tags) {
-      if (typeof tags === 'string') {
-        parsedTags = tags.split(',').map(tag => tag.trim()).filter(tag => tag);
-      } else if (Array.isArray(tags)) {
-        parsedTags = tags.filter(tag => tag && tag.trim());
-      }
-    }
-
-    // Upload image if provided
     let imageUrl = null;
-    if (req.file && req.file.buffer) {
-      console.log("Uploading post image to Cloudinary...");
-      try {
-        const result = await uploadToCloudinary(req.file.buffer);
-        imageUrl = result.secure_url;
-        console.log("Post image uploaded successfully:", imageUrl);
-      } catch (uploadError) {
-        console.error("Cloudinary upload error:", uploadError);
-        return res.status(500).json({
-          success: false,
-          message: "Failed to upload image"
-        });
-      }
+    if (req.file) {
+      const result = await cloudinary.uploader.upload(req.file.path, {
+        folder: "posts",
+      });
+      imageUrl = result.secure_url;
     }
 
-    const post = new Post({
+    const post = await Post.create({
       title,
       content,
-      tags: parsedTags,
-      creator: creatorId,
-      ...(imageUrl && { image: imageUrl })
+      tags: tags ? tags.split(",") : [],
+      creator,
+      image: imageUrl,
     });
 
-    await post.save();
-
-    // Add post to user's posts array
-    await User.findByIdAndUpdate(creatorId, {
-      $push: { posts: post._id }
-    });
-
-    // Populate creator details
-    await post.populate('creator', 'userName fullName avatar');
+    await post.populate("creator", "userName avatar");
 
     res.status(201).json({
-      success: true,
       message: "Post created successfully",
-      data: post
+      post,
     });
-  } catch (err) {
-    console.error("Create Post Error:", err);
-    res.status(500).json({ 
-      success: false, 
-      message: "Server error" 
-    });
+  } catch (error) {
+    console.error("Error creating post:", error);
+    res.status(500).json({ message: "Server error", error: error.message });
   }
 };
 
 // ================= GET ALL POSTS =================
 export const getAllPosts = async (req, res) => {
   try {
-    const { page = 1, limit = 10, search, tag } = req.query;
-    const skip = (page - 1) * limit;
-
-    // Build filter object
-    let filter = {};
-    
-    if (search) {
-      filter.$or = [
-        { title: { $regex: search, $options: 'i' } },
-        { content: { $regex: search, $options: 'i' } }
-      ];
-    }
-    
-    if (tag) {
-      filter.tags = { $in: [tag] };
-    }
-
-    const posts = await Post.find(filter)
-      .populate('creator', 'userName fullName avatar')
-      .populate('comments')
-      .sort({ createdAt: -1 })
-      .skip(skip)
-      .limit(parseInt(limit));
-
-    const totalPosts = await Post.countDocuments(filter);
-
-    res.status(200).json({
-      success: true,
-      data: {
-        posts,
-        pagination: {
-          currentPage: parseInt(page),
-          totalPages: Math.ceil(totalPosts / limit),
-          totalPosts,
-          hasNext: page < Math.ceil(totalPosts / limit),
-          hasPrev: page > 1
-        }
-      }
-    });
-  } catch (err) {
-    console.error("Get All Posts Error:", err);
-    res.status(500).json({ 
-      success: false, 
-      message: "Server error" 
-    });
+    const posts = await Post.find()
+      .populate("creator", "userName avatar")
+      .sort({ createdAt: -1 });
+    res.status(200).json(posts);
+  } catch (error) {
+    console.error("Error fetching posts:", error);
+    res.status(500).json({ message: "Server error", error: error.message });
   }
 };
 
-// ================= GET POST BY ID =================
+// ================= GET SINGLE POST =================
 export const getPostById = async (req, res) => {
   try {
-    const { id } = req.params;
+    const post = await Post.findById(req.params.id)
+      .populate("creator", "userName avatar")
+      .populate("comments");
 
-    const post = await Post.findById(id)
-      .populate('creator', 'userName fullName avatar')
-      .populate({
-        path: 'comments',
-        populate: {
-          path: 'author',
-          select: 'userName fullName avatar'
-        }
-      });
+    if (!post) return res.status(404).json({ message: "Post not found" });
 
-    if (!post) {
-      return res.status(404).json({
-        success: false,
-        message: "Post not found"
-      });
-    }
-
-    res.status(200).json({
-      success: true,
-      data: post
-    });
-  } catch (err) {
-    console.error("Get Post By ID Error:", err);
-    res.status(500).json({ 
-      success: false, 
-      message: "Server error" 
-    });
+    res.status(200).json(post);
+  } catch (error) {
+    console.error("Error fetching post:", error);
+    res.status(500).json({ message: "Server error", error: error.message });
   }
 };
 
 // ================= UPDATE POST =================
 export const updatePost = async (req, res) => {
   try {
-    const { id } = req.params;
     const { title, content, tags } = req.body;
-    const userId = req.user._id;
+    const post = await Post.findById(req.params.id);
 
-    const post = await Post.findById(id);
-    if (!post) {
-      return res.status(404).json({
-        success: false,
-        message: "Post not found"
+    if (!post) return res.status(404).json({ message: "Post not found" });
+    if (post.creator.toString() !== req.user.id) {
+      return res.status(403).json({ message: "Unauthorized" });
+    }
+
+    if (req.file) {
+      const result = await cloudinary.uploader.upload(req.file.path, {
+        folder: "posts",
       });
+      post.image = result.secure_url;
     }
 
-    // Check if user is the creator
-    if (post.creator.toString() !== userId.toString()) {
-      return res.status(403).json({
-        success: false,
-        message: "You can only update your own posts"
-      });
-    }
+    post.title = title || post.title;
+    post.content = content || post.content;
+    post.tags = tags ? tags.split(",") : post.tags;
 
-    // Parse tags if provided
-    let parsedTags = post.tags;
-    if (tags !== undefined) {
-      if (typeof tags === 'string') {
-        parsedTags = tags.split(',').map(tag => tag.trim()).filter(tag => tag);
-      } else if (Array.isArray(tags)) {
-        parsedTags = tags.filter(tag => tag && tag.trim());
-      }
-    }
+    await post.save();
+    await post.populate("creator", "userName avatar");
 
-    // Handle image update
-    let imageUrl = post.image;
-    if (req.file && req.file.buffer) {
-      console.log("Uploading new post image to Cloudinary...");
-      try {
-        const result = await uploadToCloudinary(req.file.buffer);
-        imageUrl = result.secure_url;
-        console.log("New post image uploaded successfully:", imageUrl);
-      } catch (uploadError) {
-        console.error("Cloudinary upload error:", uploadError);
-        return res.status(500).json({
-          success: false,
-          message: "Failed to upload image"
-        });
-      }
-    }
-
-    const updatedPost = await Post.findByIdAndUpdate(
-      id,
-      {
-        ...(title && { title }),
-        ...(content && { content }),
-        tags: parsedTags,
-        ...(imageUrl && { image: imageUrl })
-      },
-      { new: true, runValidators: true }
-    ).populate('creator', 'userName fullName avatar');
-
-    res.status(200).json({
-      success: true,
-      message: "Post updated successfully",
-      data: updatedPost
-    });
-  } catch (err) {
-    console.error("Update Post Error:", err);
-    res.status(500).json({ 
-      success: false, 
-      message: "Server error" 
-    });
+    res.status(200).json({ message: "Post updated successfully", post });
+  } catch (error) {
+    console.error("Error updating post:", error);
+    res.status(500).json({ message: "Server error", error: error.message });
   }
 };
 
 // ================= DELETE POST =================
 export const deletePost = async (req, res) => {
   try {
-    const { id } = req.params;
-    const userId = req.user._id;
+    const post = await Post.findById(req.params.id);
 
-    const post = await Post.findById(id);
-    if (!post) {
-      return res.status(404).json({
-        success: false,
-        message: "Post not found"
-      });
+    if (!post) return res.status(404).json({ message: "Post not found" });
+    if (post.creator.toString() !== req.user.id) {
+      return res.status(403).json({ message: "Unauthorized" });
     }
 
-    // Check if user is the creator
-    if (post.creator.toString() !== userId.toString()) {
-      return res.status(403).json({
-        success: false,
-        message: "You can only delete your own posts"
-      });
-    }
-
-    await Post.findByIdAndDelete(id);
-
-    // Remove post from user's posts array
-    await User.findByIdAndUpdate(userId, {
-      $pull: { posts: id }
-    });
-
-    res.status(200).json({
-      success: true,
-      message: "Post deleted successfully"
-    });
-  } catch (err) {
-    console.error("Delete Post Error:", err);
-    res.status(500).json({ 
-      success: false, 
-      message: "Server error" 
-    });
+    await post.deleteOne();
+    res.status(200).json({ message: "Post deleted successfully" });
+  } catch (error) {
+    console.error("Error deleting post:", error);
+    res.status(500).json({ message: "Server error", error: error.message });
   }
 };
 
-// ================= GET USER POSTS =================
-export const getUserPosts = async (req, res) => {
-  try {
-    const { userId } = req.params;
-    const { page = 1, limit = 10 } = req.query;
-    const skip = (page - 1) * limit;
-
-    const posts = await Post.find({ creator: userId })
-      .populate('creator', 'userName fullName avatar')
-      .populate('comments')
-      .sort({ createdAt: -1 })
-      .skip(skip)
-      .limit(parseInt(limit));
-
-    const totalPosts = await Post.countDocuments({ creator: userId });
-
-    res.status(200).json({
-      success: true,
-      data: {
-        posts,
-        pagination: {
-          currentPage: parseInt(page),
-          totalPages: Math.ceil(totalPosts / limit),
-          totalPosts,
-          hasNext: page < Math.ceil(totalPosts / limit),
-          hasPrev: page > 1
-        }
-      }
-    });
-  } catch (err) {
-    console.error("Get User Posts Error:", err);
-    res.status(500).json({ 
-      success: false, 
-      message: "Server error" 
-    });
-  }
-};
-
-// ================= LIKE/UNLIKE POST =================
+// ================= LIKE POST =================
 export const toggleLikePost = async (req, res) => {
   try {
-    const { id } = req.params;
-    const userId = req.user._id;
+    const post = await Post.findById(req.params.id);
 
-    const post = await Post.findById(id);
-    if (!post) {
-      return res.status(404).json({
-        success: false,
-        message: "Post not found"
-      });
-    }
+    if (!post) return res.status(404).json({ message: "Post not found" });
 
-    // Check if user already liked the post
-    const isLiked = post.likes && post.likes.includes(userId);
-    
-    if (isLiked) {
-      // Unlike the post
-      post.likes = post.likes.filter(like => like.toString() !== userId.toString());
-      // Remove from user's likedPosts
-      await User.findByIdAndUpdate(userId, {
-        $pull: { likedPosts: id }
-      });
+    const userId = req.user.id;
+    const alreadyLiked = post.likes.includes(userId);
+
+    if (alreadyLiked) {
+      post.likes = post.likes.filter((id) => id.toString() !== userId);
     } else {
-      // Like the post
-      if (!post.likes) post.likes = [];
       post.likes.push(userId);
-      // Add to user's likedPosts
-      await User.findByIdAndUpdate(userId, {
-        $push: { likedPosts: id }
-      });
     }
 
     await post.save();
-
-    res.status(200).json({
-      success: true,
-      message: isLiked ? "Post unliked" : "Post liked",
-      data: {
-        isLiked: !isLiked,
-        likesCount: post.likes ? post.likes.length : 0
-      }
-    });
-  } catch (err) {
-    console.error("Toggle Like Error:", err);
-    res.status(500).json({ 
-      success: false, 
-      message: "Server error" 
-    });
-  }
-};
-
-// ================= GET LEADERBOARD =================
-export const getLeaderboard = async (req, res) => {
-  try {
-    const { limit = 10 } = req.query;
-
-    const posts = await Post.find({})
-      .populate('creator', 'userName fullName avatar')
-      .sort({ votes: -1 })
-      .limit(parseInt(limit));
-
-    // Add ranking number to each post
-    const leaderboard = posts.map((post, index) => ({
-      ...post.toObject(),
-      rank: index + 1
-    }));
-
-    res.status(200).json({
-      success: true,
-      message: "Leaderboard retrieved successfully",
-      data: {
-        leaderboard,
-        totalPosts: leaderboard.length
-      }
-    });
-  } catch (err) {
-    console.error("Get Leaderboard Error:", err);
-    res.status(500).json({ 
-      success: false, 
-      message: "Server error" 
-    });
+    res.status(200).json({ message: "Like status updated", likes: post.likes });
+  } catch (error) {
+    console.error("Error liking post:", error);
+    res.status(500).json({ message: "Server error", error: error.message });
   }
 };
 
 // ================= VOTE POST =================
 export const votePost = async (req, res) => {
   try {
-    const { id } = req.params;
-    const { voteType } = req.body; // 'upvote' or 'downvote'
-    const userId = req.user._id;
+    const { type } = req.body; // "up" or "down"
+    const post = await Post.findById(req.params.id);
 
-    const post = await Post.findById(id);
-    if (!post) {
-      return res.status(404).json({
-        success: false,
-        message: "Post not found"
-      });
-    }
+    if (!post) return res.status(404).json({ message: "Post not found" });
 
-    // Initialize votes if not exists
-    if (post.votes === undefined) {
-      post.votes = 0;
-    }
-
-    // Update votes based on vote type
-    if (voteType === 'upvote') {
-      post.votes += 1;
-    } else if (voteType === 'downvote') {
-      post.votes -= 1;
-    } else {
-      return res.status(400).json({
-        success: false,
-        message: "Invalid vote type. Use 'upvote' or 'downvote'"
-      });
-    }
+    if (type === "up") post.votes += 1;
+    if (type === "down") post.votes -= 1;
 
     await post.save();
+    res.status(200).json({ message: "Vote updated", votes: post.votes });
+  } catch (error) {
+    console.error("Error voting post:", error);
+    res.status(500).json({ message: "Server error", error: error.message });
+  }
+};
+
+// ================= LEADERBOARD =================
+export const getLeaderboard = async (req, res) => {
+  try {
+    const topPosts = await Post.find()
+      .sort({ votes: -1, likes: -1 })
+      .limit(10)
+      .populate("creator", "userName avatar");
+
+    res.status(200).json(topPosts);
+  } catch (error) {
+    console.error("Error fetching leaderboard:", error);
+    res.status(500).json({ message: "Server error", error: error.message });
+  }
+};
+
+// ================= GET USER POSTS (with pagination) =================
+export const getUserPosts = async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const { page = 1, limit = 10 } = req.query;
+
+    const currentPage = parseInt(page);
+    const posts = await Post.find({ creator: userId })
+      .skip((currentPage - 1) * limit)
+      .limit(parseInt(limit))
+      .populate("creator", "userName avatar")
+      .sort({ createdAt: -1 });
+
+    const totalPosts = await Post.countDocuments({ creator: userId });
 
     res.status(200).json({
-      success: true,
-      message: `Post ${voteType} successful`,
-      data: {
-        votes: post.votes
-      }
+      posts,
+      totalPosts,
+      totalPages: Math.ceil(totalPosts / limit),
+      currentPage,
+      hasNext: currentPage < Math.ceil(totalPosts / limit),
+      hasPrev: currentPage > 1,
     });
-  } catch (err) {
-    console.error("Vote Post Error:", err);
-    res.status(500).json({ 
-      success: false, 
-      message: "Server error" 
-    });
+  } catch (error) {
+    console.error("Error fetching user posts:", error);
+    res.status(500).json({ message: "Server error", error: error.message });
   }
 };

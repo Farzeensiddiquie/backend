@@ -14,7 +14,7 @@ const validate = (schema) => (req, res, next) => {
 // User validation schemas
 export const validateRegister = validate(Joi.object({
   userName: Joi.string().alphanum().min(3).max(30).required(),
-  fullName: Joi.string().min(2).max(50).required(),
+ 
   email: Joi.string().email().required(),
   password: Joi.string().min(6).required(),
   bio: Joi.string().max(500).optional()
@@ -26,7 +26,7 @@ export const validateLogin = validate(Joi.object({
 }));
 
 export const validateProfileUpdate = validate(Joi.object({
-  fullName: Joi.string().min(2).max(50).optional(),
+ 
   bio: Joi.string().max(500).optional(),
   userName: Joi.string().alphanum().min(3).max(30).optional()
 }));

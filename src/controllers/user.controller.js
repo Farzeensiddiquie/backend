@@ -30,9 +30,9 @@ const uploadToCloudinary = (fileBuffer, folder = "avatars") => {
 // ================= REGISTER =================
 export const registerUser = async (req, res) => {
   try {
-    const { userName, fullName, email, password, bio } = req.body;
+    const { userName, email, password, bio } = req.body;
 
-    if (!userName || !fullName || !email || !password || !bio) {
+    if (!userName  || !email || !password) {
       return res.status(400).json({ success: false, message: "All fields are required" });
     }
 
@@ -57,7 +57,7 @@ export const registerUser = async (req, res) => {
       }
     }
 
-    const user = new User({ userName, fullName, email, password, avatar: avatarUrl, bio });
+    const user = new User({ userName, email, password, avatar: avatarUrl, bio });
     await user.save();
 
     const accessToken = user.generateAccessToken();
@@ -70,7 +70,6 @@ export const registerUser = async (req, res) => {
         user: {
           _id: user._id,
           userName: user.userName,
-          fullName: user.fullName,
           email: user.email,
           avatar: user.avatar,
           bio: user.bio,
@@ -115,7 +114,6 @@ export const loginUser = async (req, res) => {
         user: {
           _id: user._id,
           userName: user.userName,
-          fullName: user.fullName,
           email: user.email,
           avatar: user.avatar,
           bio: user.bio,
@@ -160,7 +158,6 @@ export const getProfile = async (req, res) => {
         user: {
           _id: user._id,
           userName: user.userName,
-          fullName: user.fullName,
           email: user.email,
           avatar: user.avatar,
           bio: user.bio,
@@ -221,7 +218,6 @@ export const updateAvatar = async (req, res) => {
         user: {
           _id: updatedUser._id,
           userName: updatedUser.userName,
-          fullName: updatedUser.fullName,
           email: updatedUser.email,
           avatar: updatedUser.avatar,
           bio: updatedUser.bio,
@@ -242,7 +238,7 @@ export const updateAvatar = async (req, res) => {
 export const updateProfile = async (req, res) => {
   try {
     const userId = req.user._id;
-    const { fullName, bio, userName } = req.body;
+    const {  bio, userName } = req.body;
 
     // Check if userName is being changed and if it's available
     if (userName) {
@@ -261,7 +257,7 @@ export const updateProfile = async (req, res) => {
 
     // Build update object
     const updateData = {};
-    if (fullName) updateData.fullName = fullName;
+   
     if (bio !== undefined) updateData.bio = bio;
     if (userName) updateData.userName = userName;
 
@@ -278,7 +274,7 @@ export const updateProfile = async (req, res) => {
         user: {
           _id: updatedUser._id,
           userName: updatedUser.userName,
-          fullName: updatedUser.fullName,
+         
           email: updatedUser.email,
           avatar: updatedUser.avatar,
           bio: updatedUser.bio,
@@ -348,7 +344,6 @@ export const getUserById = async (req, res) => {
         user: {
           _id: user._id,
           userName: user.userName,
-          fullName: user.fullName,
           avatar: user.avatar,
           bio: user.bio,
           score: user.score,
